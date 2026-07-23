@@ -33,8 +33,9 @@ class NTXentLoss(nn.Module):
         similarity_matrix = torch.matmul(z, z.T) / self.temperature
 
         # 4. Create Mask to discard self-similarity (diagonal entries i == j)
+        # Using -1e4 instead of -9e15 to prevent FP16/AMP underflow & overflow errors
         mask = torch.eye(2 * N, dtype=torch.bool, device=device)
-        similarity_matrix.masked_fill_(mask, -9e15)
+        similarity_matrix.masked_fill_(mask, -1e4)
 
         # 5. Define Targets for Positive Pairs:
         # For item k (where 0 <= k < N), its positive twin is at k + N.

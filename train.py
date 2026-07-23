@@ -19,8 +19,9 @@ def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device):
 
         optimizer.zero_grad()
 
-        # Automatic Mixed Precision (AMP) for GPU acceleration
-        with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+        # Modern PyTorch Automatic Mixed Precision (AMP) API
+        device_type = 'cuda' if device.type == 'cuda' else 'cpu'
+        with torch.amp.autocast(device_type=device_type, enabled=(device.type == "cuda")):
             _, z_i = model(x_i)
             _, z_j = model(x_j)
             loss = criterion(z_i, z_j)
@@ -78,7 +79,9 @@ def main():
 
     criterion = NTXentLoss(temperature=args.temperature)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+    
+    # Modern PyTorch GradScaler API
+    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == "cuda"))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0)
 
     # 3. Pre-training Loop
