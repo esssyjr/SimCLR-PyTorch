@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch / Model Checkpoints & Data
+data/
+saved_models/
+*.pth
+*.pt
+*.ckpt
+
+# Experiment tracking & logs
+runs/
+wandb/
+*.log
+events.out.tfevents.*
+
+# Jupyter Notebook & IDE configs
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.swp
+
+# Environment variables & virtual environments
+.env
+venv/
+env/
+ENV/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test & coverage
+.pytest_cache/
+.coverage
