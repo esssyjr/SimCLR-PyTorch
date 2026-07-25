@@ -110,8 +110,8 @@ def main():
     train_transform = LinearEvalDataTransform(input_shape=img_size, is_train=True, dataset_name=dataset_name)
     test_transform = LinearEvalDataTransform(input_shape=img_size, is_train=False, dataset_name=dataset_name)
 
-    train_dataset = get_dataset(name=dataset_name, data_dir=args.data_dir, transform=train_transform, train=True)
-    test_dataset = get_dataset(name=dataset_name, data_dir=args.data_dir, transform=test_transform, train=False)
+    train_dataset = get_dataset(name=dataset_name, data_dir=args.data_dir, transform=train_transform, train=True, is_pretraining=False)
+    test_dataset = get_dataset(name=dataset_name, data_dir=args.data_dir, transform=test_transform, train=False, is_pretraining=False)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
@@ -132,8 +132,16 @@ def main():
     for param in model.parameters():
         param.requires_grad = False
 
-    # Attach Linear Classifier directly to feature dimension h
-    feature_dim = model.backbone.fc.in_features
+    # Safe feature dimension calculation (handles nn.Identity() safely)
+    if hasattr(model, "num_ftrs"):
+        feature_dim = model.num_ftrs
+    else:
+        resnet_ftrs = {"resnet18": 512, "resnet34": 512, "resnet50": 2048, "resnet101": 2048, "resnet152": 2048}
+        feature_dim = resnet_ftrs.get(arch.lower(), 512)
+
+    print(f"Detected Feature Dimension (h): {feature_dim}")
+
+    # Attach Linear Classifier directly to representation h
     classifier = LinearClassifier(feature_dim=feature_dim, num_classes=args.num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -155,7 +163,8 @@ def main():
         if test_acc > best_test_acc:
             best_test_acc = test_acc
             # Save best classifier state dict
-            os.makedirs(os.path.dirname(args.save_classifier), exist_ok=True)
+            if os.path.dirname(args.save_classifier):
+                os.makedirs(os.path.dirname(args.save_classifier), exist_ok=True)
             torch.save(classifier.state_dict(), args.save_classifier)
 
         print(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | Test Loss: {test_loss:.4f} Acc: {test_acc:.2f}% (Best: {best_test_acc:.2f}%)")
