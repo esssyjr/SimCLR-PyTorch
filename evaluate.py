@@ -12,7 +12,7 @@ from utils.seed import set_seed
 
 class LinearClassifier(nn.Module):
     """
-    Simple linear layer attached directly to frozen pre-trained encoder representations (h).
+    Simple linear layer attached directly to frozen pre-trained encoder representations (h or z).
     """
     def __init__(self, feature_dim, num_classes=10):
         super(LinearClassifier, self).__init__()
@@ -32,7 +32,7 @@ def adapt_resnet_stem(model, img_size):
     return model
 
 
-def run_epoch(model, classifier, dataloader, criterion, optimizer, device, is_train=True):
+def run_epoch(model, classifier, dataloader, criterion, optimizer, device, eval_feat="h", is_train=True):
     if is_train:
         classifier.train()
     else:
@@ -46,12 +46,14 @@ def run_epoch(model, classifier, dataloader, criterion, optimizer, device, is_tr
         for x, y in dataloader:
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
-            # Extract frozen representation h (encoder backbone before projection head)
+            # Extract frozen representations
             with torch.no_grad():
-                h, _ = model(x)
+                h, z = model(x)
+                # Dynamically choose between backbone features (h) or projection head features (z)
+                feat = z if eval_feat.lower() == "z" else h
 
             # Forward pass through trainable linear classifier
-            outputs = classifier(h)
+            outputs = classifier(feat)
             loss = criterion(outputs, y)
 
             if is_train:
@@ -72,6 +74,8 @@ def run_epoch(model, classifier, dataloader, criterion, optimizer, device, is_tr
 def main():
     parser = argparse.ArgumentParser(description="SimCLR Linear Evaluation Protocol (Paper Compliant)")
     parser.add_argument("--ckpt_path", type=str, required=True, help="Path to pre-trained model checkpoint")
+    parser.add_argument("--eval_feat", type=str, default="h", choices=["h", "z"], 
+                        help="Feature representation to evaluate on: 'h' (backbone output) or 'z' (projection head output)")
     parser.add_argument("--dataset", type=str, default=None, help="Dataset name (cifar10, stl10, custom). If None, inferred from config.")
     parser.add_argument("--data_dir", type=str, default="./data", help="Directory for dataset")
     parser.add_argument("--arch", type=str, default=None, choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"],
@@ -132,16 +136,19 @@ def main():
     for param in model.parameters():
         param.requires_grad = False
 
-    # Safe feature dimension calculation (handles nn.Identity() safely)
-    if hasattr(model, "num_ftrs"):
-        feature_dim = model.num_ftrs
+    # Safe feature dimension calculation based on chosen feature (h vs z)
+    if args.eval_feat.lower() == "z":
+        feature_dim = getattr(model, "out_dim", 128)
     else:
-        resnet_ftrs = {"resnet18": 512, "resnet34": 512, "resnet50": 2048, "resnet101": 2048, "resnet152": 2048}
-        feature_dim = resnet_ftrs.get(arch.lower(), 512)
+        if hasattr(model, "num_ftrs"):
+            feature_dim = model.num_ftrs
+        else:
+            resnet_ftrs = {"resnet18": 512, "resnet34": 512, "resnet50": 2048, "resnet101": 2048, "resnet152": 2048}
+            feature_dim = resnet_ftrs.get(arch.lower(), 512)
 
-    print(f"Detected Feature Dimension (h): {feature_dim}")
+    print(f"Selected Feature Space: '{args.eval_feat.upper()}' | Detected Dimension: {feature_dim}")
 
-    # Attach Linear Classifier directly to representation h
+    # Attach Linear Classifier directly to selected representation space
     classifier = LinearClassifier(feature_dim=feature_dim, num_classes=args.num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -153,12 +160,12 @@ def main():
         optimizer = torch.optim.Adam(classifier.parameters(), lr=args.lr, weight_decay=1e-6)
 
     # Linear Evaluation Loop
-    print(f"Starting Linear Evaluation on frozen {arch} backbone using {args.optimizer.upper()} for {args.epochs} epochs...")
+    print(f"Starting Linear Evaluation on representation '{args.eval_feat.upper()}' of frozen {arch} using {args.optimizer.upper()} for {args.epochs} epochs...")
     best_test_acc = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss, train_acc = run_epoch(model, classifier, train_loader, criterion, optimizer, device, is_train=True)
-        test_loss, test_acc = run_epoch(model, classifier, test_loader, criterion, optimizer, device, is_train=False)
+        train_loss, train_acc = run_epoch(model, classifier, train_loader, criterion, optimizer, device, eval_feat=args.eval_feat, is_train=True)
+        test_loss, test_acc = run_epoch(model, classifier, test_loader, criterion, optimizer, device, eval_feat=args.eval_feat, is_train=False)
 
         if test_acc > best_test_acc:
             best_test_acc = test_acc
@@ -169,7 +176,7 @@ def main():
 
         print(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | Test Loss: {test_loss:.4f} Acc: {test_acc:.2f}% (Best: {best_test_acc:.2f}%)")
 
-    print(f"\nLinear Evaluation Completed! Peak Test Accuracy: {best_test_acc:.2f}%")
+    print(f"\nLinear Evaluation Completed for representation '{args.eval_feat.upper()}'! Peak Test Accuracy: {best_test_acc:.2f}%")
     print(f"Linear classifier state dict saved to: {args.save_classifier}")
 
 
