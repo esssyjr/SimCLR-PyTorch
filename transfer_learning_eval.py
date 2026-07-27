@@ -23,13 +23,17 @@ class TransferClassifier(nn.Module):
         return self.fc(x)
 
 
-def adapt_resnet_stem(model, img_size):
-    if img_size <= 64:
-        print(f"-> Low resolution detected ({img_size}x{img_size}). Adapting CIFAR stem (3x3 conv, stride 1, no maxpool)...")
+def adapt_resnet_stem(model, pretrain_img_size=32):
+    """
+    Ensures the model stem matches the pre-trained checkpoint architecture.
+    Since weights were pre-trained on 32x32 CIFAR-10, we must preserve the 3x3 conv stem.
+    """
+    if pretrain_img_size <= 64:
+        print(f"-> Using pre-trained CIFAR stem (3x3 conv, stride 1, no maxpool) to match checkpoint...")
         model.backbone.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         model.backbone.maxpool = nn.Identity()
     else:
-        print(f"-> High resolution detected ({img_size}x{img_size}). Using standard ImageNet stem (7x7 conv, stride 2, maxpool)...")
+        print(f"-> Using standard ImageNet stem (7x7 conv, stride 2, maxpool)...")
     return model
 
 
@@ -91,7 +95,8 @@ def run_epoch(model, classifier, dataloader, criterion, optimizer, device, is_tr
 
 def log_results_to_csv(csv_path, fieldnames, row_dict):
     file_exists = os.path.exists(csv_path)
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True) if os.path.dirname(csv_path) else None
+    if os.path.dirname(csv_path):
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     
     with open(csv_path, mode="a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -103,12 +108,12 @@ def log_results_to_csv(csv_path, fieldnames, row_dict):
 def main():
     parser = argparse.ArgumentParser(description="Publication-Grade Linear Transfer Evaluation")
     parser.add_argument("--ckpt_path", type=str, required=True, help="Path to pre-trained SimCLR checkpoint")
-    parser.add_argument("--data_dir", type=str, required=True, help="Path to dataset directory containing train/, val/, and test/")
+    parser.add_argument("--data_dir", type=str, required=True, help="Path to dataset directory containing Train/, val/ (optional), and Test/")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--epochs", type=int, default=50, help="Epochs to train linear classifier")
     parser.add_argument("--optimizer", type=str, default="adam", choices=["sgd", "adam"], help="Optimizer choice")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--img_size", type=int, default=None, help="Image dimension")
+    parser.add_argument("--img_size", type=int, default=224, help="Target image dimension for evaluation (e.g. 224)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--save_dir", type=str, default="./experiment_results", help="Directory to save checkpoints and logs")
     parser.add_argument("--exp_name", type=str, default="naira_transfer", help="Unique identifier for experiment")
@@ -127,15 +132,16 @@ def main():
     config = checkpoint.get("config", {}) if isinstance(checkpoint, dict) else {}
 
     arch = config.get("arch", "resnet18")
-    img_size = args.img_size or config.get("img_size", 32)
+    pretrain_img_size = config.get("img_size", 32)
+    img_size = args.img_size
 
-    # 2. Check Directories & Protocol Splits
-    train_path = os.path.join(args.data_dir, "Train")
-    val_path = os.path.join(args.data_dir, "val")
-    test_path = os.path.join(args.data_dir, "Test")
+    # 2. Check Directories & Protocol Splits (Flexible Case-Insensitive Check)
+    train_path = os.path.join(args.data_dir, "Train") if os.path.exists(os.path.join(args.data_dir, "Train")) else os.path.join(args.data_dir, "train")
+    val_path = os.path.join(args.data_dir, "val") if os.path.exists(os.path.join(args.data_dir, "val")) else os.path.join(args.data_dir, "Val")
+    test_path = os.path.join(args.data_dir, "Test") if os.path.exists(os.path.join(args.data_dir, "Test")) else os.path.join(args.data_dir, "test")
 
     if not os.path.exists(train_path) or not os.path.exists(test_path):
-        raise FileNotFoundError(f"Dataset MUST contain 'train/' and 'test/' directories! Checked: {args.data_dir}")
+        raise FileNotFoundError(f"Dataset MUST contain 'train/' (or 'Train/') and 'test/' (or 'Test/') directories! Checked: {args.data_dir}")
     
     has_val = os.path.exists(val_path)
     if not has_val:
@@ -153,15 +159,16 @@ def main():
 
     print(f"\n================ Target Dataset Metadata ================")
     print(f"Dataset: {args.data_dir} | Detected Classes ({num_classes}): {classes}")
+    print(f"Target Input Resolution: {img_size}x{img_size}")
     print(f"Samples -> Train: {len(train_dataset)} | " + (f"Val: {len(val_dataset)} | " if has_val else "") + f"Test: {len(test_dataset)}")
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True) if has_val else None
 
-    # 4. Build Pre-trained SimCLR Backbone
+    # 4. Build Pre-trained SimCLR Backbone & Adapt Stem to Pre-trained Resolution
     model = SimCLRModel(base_arch=arch, out_dim=128)
-    model = adapt_resnet_stem(model, img_size=img_size)
+    model = adapt_resnet_stem(model, pretrain_img_size=pretrain_img_size)
 
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
