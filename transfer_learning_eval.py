@@ -130,9 +130,9 @@ def main():
     img_size = args.img_size or config.get("img_size", 32)
 
     # 2. Check Directories & Protocol Splits
-    train_path = os.path.join(args.data_dir, "train")
+    train_path = os.path.join(args.data_dir, "Train")
     val_path = os.path.join(args.data_dir, "val")
-    test_path = os.path.join(args.data_dir, "test")
+    test_path = os.path.join(args.data_dir, "Test")
 
     if not os.path.exists(train_path) or not os.path.exists(test_path):
         raise FileNotFoundError(f"Dataset MUST contain 'train/' and 'test/' directories! Checked: {args.data_dir}")
